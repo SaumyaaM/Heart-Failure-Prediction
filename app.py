@@ -1,80 +1,76 @@
-import streamlit as st
-import numpy as np
+from flask import Flask, render_template, request
 import pandas as pd
-from sklearn.preprocessing import  LabelEncoder
-import tensorflow as tf
-from tensorflow.keras.models import load_model 
+import numpy as np
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.ensemble import RandomForestClassifier
+import logging
 
-ChestPainType_le = LabelEncoder()
-RestingECG_le = LabelEncoder()
-ExerciseAngina_le = LabelEncoder()
-ST_Slope_le = LabelEncoder()
-Sex_le = LabelEncoder()
+app = Flask(__name__)
 
-ChestPainType_le.classes_ = np.load('Encodings/ChestPainType.npy', allow_pickle = True)
-RestingECG_le.classes_ = np.load('Encodings/RestingECG.npy', allow_pickle = True)
-ExerciseAngina_le.classes_ = np.load('Encodings/ExerciseAngina.npy', allow_pickle = True)
-ST_Slope_le.classes_ = np.load('Encodings/ST_Slope.npy', allow_pickle = True)
-Sex_le.classes_ = np.load('Encodings/Sex.npy', allow_pickle = True)
-
-model = load_model('Model')
-
-st.header("Heart Failure Prediction")
-st.text_input("Enter your Name: ", key="name")
-
-
+# Load the dataset
 data = pd.read_csv("heart.csv")
-data.pop('HeartDisease')
-if st.checkbox('Show dataframe'):
-    data
 
-st.subheader("Please select relevant medical information:")
-#Discrete: Sex, ChestPainType, FastingBS, RestingECG, ExerciseAngina, ST_Slope
-#Continuous: Age, RestingBP, Cholesterol, MaxHR, OldPeak, 
-left_column, right_column = st.columns(2)
-with left_column:
-    inp_Sex = st.radio(
-        'Sex:',
-        np.unique(data['Sex'])
-        )
-    inp_ChestPainType = st.radio(
-        'Chest Pain Type:',
-        np.unique(data['ChestPainType'])
-    )
-    inp_FastingBS = st.radio(
-        'Fasting Blood Sugar(1, If greater than 120 mg/dl, 0 otherwise):',
-        np.unique(data['FastingBS'])
-    )
-    inp_RestingECG = st.radio(
-        'Resting ElectroCardioGram Results:',
-        np.unique(data['RestingECG'])
-    )
-    inp_ExerciseAngina = st.radio(
-        'Exercise Induced Angina:',
-        np.unique(data['ExerciseAngina'])
-    )
-    inp_ST_Slope = st.radio(
-        'Slope of peak exercise ST segment:',
-        np.unique(data['ST_Slope'])
-    )
+# Preprocess the data
+def preprocess_data():
+    X = data.drop('HeartDisease', axis=1)
+    y = data['HeartDisease']
 
-inp_Age = st.slider('Age(years)', 0, 100)
-inp_RestingBP = st.slider('Resting Blood Pressure(mm Hg)', 0, max(data['RestingBP']))
-inp_Cholesterol = st.slider('Serum Cholesterol(mm/dl)', 0, 700)
-inp_MaxHR = st.slider('Maximum Heart Rate Achieved(/min)', 0, 250)
-inp_Oldpeak = st.slider('OldPeak: ST Depression', -3.0, 7.0)
+    # Perform label encoding for categorical variables
+    categorical_features = ['Sex', 'ChestPainType', 'FastingBS', 'RestingECG', 'MaxHR', 'ST_Slope', 'Cholesterol', 'ExerciseAngina']
+    for feature in categorical_features:
+        label_encoder = LabelEncoder()
+        X[feature] = label_encoder.fit_transform(X[feature])
 
-if st.button('Make Prediction'):
-    inp_Sex = Sex_le.transform(np.expand_dims(inp_Sex, -1))
-    inp_ChestPainType = ChestPainType_le.transform(np.expand_dims(inp_ChestPainType, -1))
-    inp_RestingECG = RestingECG_le.transform(np.expand_dims(inp_RestingECG, -1))
-    inp_ExerciseAngina = ExerciseAngina_le.transform(np.expand_dims(inp_ExerciseAngina, -1))
-    inp_ST_Slope = ST_Slope_le.transform(np.expand_dims(inp_ST_Slope, -1))
-    
-    inputs = np.expand_dims(
-        [inp_Age, int(inp_Sex), int(inp_ChestPainType), inp_RestingBP, inp_Cholesterol, int(inp_FastingBS), 
-        int(inp_RestingECG), inp_MaxHR, int(inp_ExerciseAngina), inp_Oldpeak, int(inp_ST_Slope)],
-        0
-        )
-    prediction = model.predict(inputs)
-    st.write(f"Heart Failure Risk: ", prediction[0][0] * 100.0, "%")
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+
+    return X_scaled, y, scaler
+
+# Train the model
+def train_model(X, y):
+    rf_classifier = RandomForestClassifier()
+    rf_classifier.fit(X, y)
+    return rf_classifier
+
+# Initialize data preprocessing and model training
+X_scaled, y, scaler = preprocess_data()
+rf_classifier = train_model(X_scaled, y)
+
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+@app.route('/predict', methods=['POST'])
+def predict():
+    try:
+        # Get the form inputs
+        Age = float(request.form['Age'])
+        Sex = int(request.form['Sex'])
+        ChestPainType = int(request.form['ChestPainType'])
+        RestingBP = float(request.form['RestingBP'])
+        Cholesterol = float(request.form['Cholesterol'])
+        FastingBS = int(request.form['FastingBS'])
+        RestingECG = int(request.form['RestingECG'])
+        MaxHR = float(request.form['MaxHR'])
+        ExerciseAngina = int(request.form['ExerciseAngina'])
+        Oldpeak = float(request.form['Oldpeak'])
+        ST_Slope = int(request.form['ST_Slope'])
+   
+        # Create a feature vector
+        feature_vector = np.array([Age, Sex, ChestPainType, RestingBP, Cholesterol, FastingBS, RestingECG, MaxHR, ExerciseAngina, Oldpeak, ST_Slope])
+
+        # Scale the feature vector
+        scaled_feature_vector = scaler.transform([feature_vector])
+
+        # Make the prediction
+        prediction = rf_classifier.predict(scaled_feature_vector)
+
+        # Render the result on a new page
+        return render_template('result.html', prediction=prediction[0])
+    except Exception as e:
+        logging.error(str(e))
+        return render_template('error.html')
+
+if __name__ == '__main__':
+    logging.basicConfig(level=logging.DEBUG)
+    app.run(debug=True)
